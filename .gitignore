@@ -1,0 +1,33 @@
+# Generated datasets and training / prediction outputs (at any depth)
+generated/
+outputs/
+
+# Python bytecode and tool caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.coverage
+htmlcov/
+
+# Local Python virtual environments
+.venv/
+venv/
+env/
+
+# Local editor settings and temporary verification files
+/.vscode/
+/.codex_tmp/
+/.verification/
+
+# Local environment variables (keep example configurations)
+.env
+.env.*
+!.env.example
+
+# Operating system files
+.DS_Store
+Thumbs.db
+Desktop.ini
