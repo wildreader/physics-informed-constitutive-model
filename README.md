@@ -240,3 +240,7 @@ python -m unittest discover -s tests -v
 
 - [单模型顺序训练详细说明](README_单模型顺序训练.md)：初始化、阶段继承、学习率与最佳模型保存规则。
 - [MATLAB 数据生成说明](matlab_data_generation/README.md)：合成数据模式、公式与生成接口。
+
+## 直接拟合双轴 S_bar 数据
+
+本目录的 `proportional_biaxial_Sbar*.mat` 使用 `Xtrain/Ytrain`，应通过新增的 `train_sbar.py` 训练、`pred_sbar.py` 复现完整预测。物理层停在未投影 S_bar。两种模式、已核实的数据维度和运行命令见 [S_bar 训练说明](README_Sbar训练.md)。原 `train4.py` / `pred2.py` 继续用于 Cauchy 应力数据。

@@ -129,20 +129,15 @@ class ModularConstitutivePINN(nn.Module):
         summary["trainable"] = sum(p.numel() for p in self.parameters() if p.requires_grad)
         return summary
 
-    def forward(
-        self,
-        lambda_current: torch.Tensor,
-        lambda_maximum: torch.Tensor | None,
-        j_scalar: torch.Tensor,
-        c_vector: torch.Tensor,
-        f_vector: torch.Tensor,
-        return_components: bool = False,
-    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """预测总 Cauchy 应力，并可返回等体积/体积分量与压力。
+    def forward_sbar(self, lambda_current: torch.Tensor,
+                     lambda_maximum: torch.Tensor | None = None) -> torch.Tensor:
+        """Return unprojected S_bar, holding supplied history fixed during differentiation."""
+        if self.use_volumetric:
+            raise ValueError("S_bar output requires the volumetric branch to be disabled.")
+        return self._compute_sbar(lambda_current, lambda_maximum)
 
-        即使调用方处于 ``torch.no_grad()`` 中，模型内部仍必须为自由能关于
-        拉伸量的导数建立自动微分图。因此这里局部开启梯度计算。
-        """
+    def _compute_sbar(self, lambda_current: torch.Tensor,
+                      lambda_maximum: torch.Tensor | None) -> torch.Tensor:
         with torch.enable_grad():
             if lambda_current.ndim != 2:
                 raise ValueError(
@@ -165,7 +160,7 @@ class ModularConstitutivePINN(nn.Module):
                         f"{self.architecture.value} 架构需要 lambda_maximum 输入。"
                     )
                 maximum_normalized = (
-                    lambda_maximum - self.x_mean
+                    lambda_maximum.detach() - self.x_mean
                 ) / (self.x_std + 1.0e-8)
                 damage = self.damage_module(maximum_normalized, self.norm_weights)
                 direction_energy = (1.0 - damage) * phi
@@ -181,7 +176,24 @@ class ModularConstitutivePINN(nn.Module):
                 grad_outputs=torch.ones_like(macro_energy),
                 create_graph=self.training,
             )[0]
-            s_bar = self.physics_layer(weighted_chain_force, lambda_current)
+            return self.physics_layer(weighted_chain_force, lambda_current)
+
+    def forward(
+        self,
+        lambda_current: torch.Tensor,
+        lambda_maximum: torch.Tensor | None,
+        j_scalar: torch.Tensor,
+        c_vector: torch.Tensor,
+        f_vector: torch.Tensor,
+        return_components: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """预测总 Cauchy 应力，并可返回等体积/体积分量与压力。
+
+        即使调用方处于 ``torch.no_grad()`` 中，模型内部仍必须为自由能关于
+        拉伸量的导数建立自动微分图。因此这里局部开启梯度计算。
+        """
+        with torch.enable_grad():
+            s_bar = self._compute_sbar(lambda_current, lambda_maximum)
 
             if self.use_volumetric:
                 j_energy = j_scalar.reshape(-1, 1)
