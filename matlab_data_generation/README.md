@@ -54,4 +54,4 @@ run('matlab_data_generation/architecture_3_full/generate_train_7cases.m')
 
 每阶段使用自己的标签；前一阶段最佳权重保留在同一个模型中。预测只读取最终模块组合对应的测试数据。
 
-完整命令、初始化、学习率及最优保存规则见 [单模型顺序训练使用说明](../README_单模型顺序训练.md)。
+完整命令、初始化、学习率及最优保存规则见 [分阶段训练完整指南](../README.md)。

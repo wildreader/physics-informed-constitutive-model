@@ -1,4 +1,8 @@
-# 两个双轴 S_bar 数据集的训练方式
+# 双轴 S_bar：无损伤与损伤分阶段训练
+
+本文对应最新功能提交 `632cd56`（新增 S_bar 无损伤/损伤拟合），按数据 → 物理接口 → 训练 → 预测 → 结果组织。通用网络结构与层数见 [主 README 第 2 节](README.md#model)，初始化见 [第 4 节](README.md#hyperparameters)，MSE/RMSE 定义见 [第 6 节](README.md#metrics)。
+
+本流程使用同一个三模块模型，只启用自由能和可选损伤；通过 `forward_sbar()` 输出未投影 S_bar。环境安装按 [快速开始](README.md#quick-start) 完成后，可直接运行本文命令，现有两份 MAT 无需重新生成。
 
 ## 已核实的数据
 
@@ -15,25 +19,11 @@
 - 方向与权重直接来自 `quadrature`，110 个方向，权重和为 1。
 - 应力分量沿用项目的 `11,22,33,12,13,23` 顺序；本数据三个剪切分量接近机器零，仅凭这组双轴标签无法单独辨认剪切分量之间的排列。
 
-## 原来输出曲线是怎样得到的
+## 物理接口与监督目标
 
-`train4.py` 在最终训练阶段结束后，用恢复的最佳模型，对该阶段 MAT 中的完整原始**输入按顺序分批预测。所以曲线包含内部划分后的训练点和验证点。**
+本任务在“能量 → 自动微分 → 微球积分 → S_bar”处输出，直接与 `Ytrain` 比较。Cauchy 入口还会做 Flory 投影及应力转换，因此仅关闭体积分支不足以拟合本数据。`forward_sbar()` 拒绝启用体积分支，训练脚本只构造 `free_energy` / `free_energy_damage` 两种组合。
 
-训练默认打乱训练批次，验证不打乱。**曲线的绘制顺序使用原始 MAT 样本顺序，**不是训练 DataLoader 的随机顺序，也不是把随机训练集和验证集简单拼接起来。
-
-它是逐样本本构预测，不是递归预测：最大方向伸长由输入直接提供，不使用上一个预测应力更新下一个样本。
-
-`pred2.py` 则加载检查点，预测另外指定的测试 MAT 文件；这和训练结束自动导出的全数据曲线不同。
-
-## 为什么需要调整架构
-
-原物理路径为：自由能（可乘损伤系数）→自动微分→微球积分 S_bar→Flory 投影 S_iso→可选体积应力→Cauchy 应力。
-
-新路径为：自由能（可乘损伤系数）→自动微分→微球积分 S_bar→直接与 Ytrain 比较。
-
-仅关闭体积分支仍会执行 Flory 投影和 Cauchy 转换，不能用于直接拟合 S_bar。因此增加了 `model.forward_sbar(current, maximum)`，并让原 forward 和它共用内部 S_bar 计算。S_bar 接口拒绝 full 架构，避免体积分支无监督地启用。旧 `train4.py` / `pred2.py` 的 Cauchy 流程保留。
-
-求当前方向伸长的导数时，将已给定的历史最大伸长视为独立历史变量。训练时仍保留自由能导数对网络参数的梯度；验证/预测时也局部启用自动微分，不能直接用 inference_mode 禁掉能量求导。
+完整数据流和固定历史变量求导的说明见 [主 README 第 2 节](README.md#model)；网络层数、激活与初始化均沿用主模型，无须为 S_bar 更换网络。
 
 ## 两种模式
 
@@ -46,6 +36,8 @@
 
 ## 默认训练配置
 
+与 Cauchy 分阶段训练相比，需注意：S_bar 两阶段学习率均为 0.001，按工况分层划分数据，输入统计量仅来自无损伤训练子集，并且两个阶段各保存一个检查点。
+
 - Adam，学习率 0.001，batch size 256，各阶段 500 epoch。
 - 每 200 epoch 学习率乘 0.5，损伤阶段重新初始化优化器。
 - 随机种子 42，按工况分层划分 80% 训练/20% 验证，分别为 19204/4801 点；两阶段使用相同样本索引。
@@ -56,30 +48,53 @@
 
 随机验证点来自相同五条加载路径，误差衡量的是当前路径上的拟合/插值能力。若要评估新工况泛化，需要另做整条工况或加载循环留出实验。
 
-## 运行命令（在项目根目录 PowerShell 中）
+### 可调参数
+
+| 参数 | 默认值 / 用法 |
+| --- | --- |
+| `--mode` | `both`；可选 `no_damage`、`damage` |
+| `--no-damage-data` / `--damage-data` | 根目录两份对应 MAT |
+| `--elastic-checkpoint` | 仅用于 `damage`，继承无损伤 S_bar 最佳模型 |
+| `--free-energy-epochs` / `--damage-epochs` | 各 500 |
+| `--learning-rate` | 两阶段均为 0.001 |
+| `--batch-size` | 256，同时用于训练和训练后预测 |
+| `--validation-fraction` / `--seed` | 0.2 / 42 |
+| `--output-dir` | `outputs/sbar` |
+| `--device` | `auto`；可选 `cpu`、`cuda` |
+| `--progress-interval` | 10 |
+
+StepLR 的 200 / 0.5 在脚本中固定，没有对应命令行选项；最佳选择固定使用验证集。归一化 MSE 和 RMSE 的公式与换算关系见 [主 README 第 6 节](README.md#metrics)。
+
+使用 `--elastic-checkpoint` 时仍需提供原无损伤 MAT（默认从根目录读取），路径必须与检查点记录一致；程序检查积分方向、权重和样本划分，并继承检查点中的输入统计量与划分。
+
+## 运行命令
+
+以下均从项目根目录、已激活的 Python 环境运行。默认自动选择设备；需要 GPU 时可显式添加 `--device cuda`。
 
 推荐一次完成两种模式：
 
 ```powershell
-& 'C:\programming\anaconda3\envs\torch\python.exe' train_sbar.py --mode both --device cuda
+python train_sbar.py --mode both
 ```
 
 分别运行并继承已训练自由能：
 
 ```powershell
-& 'C:\programming\anaconda3\envs\torch\python.exe' train_sbar.py --mode no_damage --device cuda
-& 'C:\programming\anaconda3\envs\torch\python.exe' train_sbar.py --mode damage --elastic-checkpoint outputs/sbar/no_damage/model.pth --device cuda
+python train_sbar.py --mode no_damage
+python train_sbar.py --mode damage --elastic-checkpoint outputs/sbar/no_damage/model.pth
 ```
 
 自定义轮数/输出目录：
 
 ```powershell
-& 'C:\programming\anaconda3\envs\torch\python.exe' train_sbar.py --mode both --free-energy-epochs 500 --damage-epochs 500 --output-dir outputs/sbar_run2 --device cuda
+python train_sbar.py --mode both --free-energy-epochs 500 --damage-epochs 500 --output-dir outputs/sbar_run2
 ```
 
 重复使用同一个输出目录会更新其中的训练结果；不同实验使用不同目录。
 
-## 输出
+## 输出与误差阅读
+
+每阶段恢复最佳权重后，按原始 MAT 顺序预测全部 24005 点，包含训练与验证点。标签仅用于监督和计算误差，预测不依赖前一步应力递推；共用说明见 [主 README 第 7 节](README.md#outputs)。
 
 `outputs/sbar/no_damage` 和 `outputs/sbar/damage` 各包含：
 
@@ -94,13 +109,15 @@
 预测最佳检查点中记录的完整原始 MAT，仍保持原样本顺序：
 
 ```powershell
-& 'C:\programming\anaconda3\envs\torch\python.exe' pred_sbar.py --checkpoint outputs/sbar/no_damage/model.pth --device cuda
-& 'C:\programming\anaconda3\envs\torch\python.exe' pred_sbar.py --checkpoint outputs/sbar/damage/model.pth --device cuda
+python pred_sbar.py --checkpoint outputs/sbar/no_damage/model.pth
+python pred_sbar.py --checkpoint outputs/sbar/damage/model.pth
 ```
 
 默认输出到对应检查点目录下的 `prediction` 子目录。这个入口用于复现原数据集的完整曲线；另一个未见工况的数据集应另作独立评估，不沿用原训练/验证索引。
 
-## 本次实际训练结果（2026-09-15）
+## 已有实验结果（2026-09-15）
+
+以下保留原文实验记录；本次文档整合未重新训练，表中相对 L2 已与现有 `outputs/sbar/*/metrics.json` 核对。
 
 RTX 4060 Laptop GPU；两阶段各 500 epoch；使用本说明的默认超参数。**误差为三个正应力分量合并的相对 L2。**
 
@@ -121,6 +138,6 @@ RTX 4060 Laptop GPU；两阶段各 500 epoch；使用本说明的默认超参数
 
 主要曲线和损伤加载/卸载响应能够拟合，但不是逐点完全重合。无损伤第一工况高伸长处 S33 仍有偏差；带损伤第二工况合并误差约 3.36%。剪切分量的预测约为浮点数值噪声量级。
 
-验证：12 项单元/回归测试通过；两个最佳检查点独立重预测与训练后自动预测的最大差均为 0；两文件目标顺序均与原始 Ytrain 一致；损伤前后自由能权重逐张量完全相同。
+原实验验证记录（本次未重跑）：12 项单元/回归测试通过；两个最佳检查点独立重预测与训练后自动预测的最大差均为 0；两文件目标顺序均与原始 Ytrain 一致；损伤前后自由能权重逐张量完全相同。
 
 `outputs/sbar_smoke` 与 `outputs/sbar_checkpoint_smoke` 是流程试跑，正式结果位于 `outputs/sbar`。
