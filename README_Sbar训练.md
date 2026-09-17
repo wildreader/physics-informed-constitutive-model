@@ -113,7 +113,7 @@ python pred_sbar.py --checkpoint outputs/sbar/no_damage/model.pth
 python pred_sbar.py --checkpoint outputs/sbar/damage/model.pth
 ```
 
-默认输出到对应检查点目录下的 `prediction` 子目录。这个入口用于复现原数据集的完整曲线；另一个未见工况的数据集应另作独立评估，不沿用原训练/验证索引。
+默认输出到对应检查点目录下的 `prediction` 子目录。这个入口用于复现原数据集的完整曲线；另一个未见工况的数据集应另作独立评估，不沿用原训练/验证索引。 **如果要预测另一个新的 MAT，需要再给预测入口增加指定新数据文件的功能。**
 
 ## 已有实验结果（2026-09-15）
 
