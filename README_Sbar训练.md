@@ -1,4 +1,4 @@
-# 双轴 S_bar：无损伤与损伤分阶段训练
+# 比例双轴 S_bar：无损伤与损伤分阶段训练
 
 本文对应最新功能提交 `632cd56`（新增 S_bar 无损伤/损伤拟合），按数据 → 物理接口 → 训练 → 预测 → 结果组织。通用网络结构与层数见 [主 README 第 2 节](README.md#model)，初始化见 [第 4 节](README.md#hyperparameters)，MSE/RMSE 定义见 [第 6 节](README.md#metrics)。
 
