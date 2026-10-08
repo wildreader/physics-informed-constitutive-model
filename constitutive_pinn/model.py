@@ -35,6 +35,7 @@ class ModularConstitutivePINN(nn.Module):
         std_value: float,
         architecture: ModelArchitecture | str = ModelArchitecture.FULL,
         delta_j_ref: float = DEFAULT_DELTA_J_REF,
+        initial_damage: float = 0.5,
     ) -> None:
         super().__init__()
         self.architecture = ModelArchitecture.parse(architecture)
@@ -71,7 +72,9 @@ class ModularConstitutivePINN(nn.Module):
         self.physics_layer = PhysicsIntegrationLayer(directions)
         self.projection_layer = FloryDecouplingProjection()
         self.cauchy_layer = PK2ToCauchyLayer()
-        self._initialize_parameters()
+        if not np.isfinite(initial_damage) or not 0.0 < initial_damage < 1.0:
+            raise ValueError('initial_damage must be finite and strictly between 0 and 1')
+        self._initialize_parameters(initial_damage)
         self.activate_modules(self.architecture)
 
     @property
@@ -82,17 +85,19 @@ class ModularConstitutivePINN(nn.Module):
     def use_volumetric(self) -> bool:
         return self.active_architecture.use_volumetric
 
-    def _initialize_parameters(self) -> None:
+    def _initialize_parameters(self, initial_damage: float = 0.5) -> None:
         for module in self.modules():
             if isinstance(module, nn.Linear):
                 nn.init.xavier_normal_(module.weight)
                 nn.init.constant_(module.bias, 0.0)
 
-        # 保留原初始化：损伤初始 d=0.5；体积初始 U_vol=0、p=0。
-        # 未开启时不执行这些模块，故自由能阶段不受 d=0.5 影响。
-        for final_linear in (self.damage_module.predictor[4], self.volumetric_module[4]):
+        # 末层权重为零使初始损伤与输入无关；Sigmoid(logit(d0)) = d0。
+        damage_linear = [m for m in self.damage_module.predictor
+                         if isinstance(m, nn.Linear)][-1]
+        for final_linear in (damage_linear, self.volumetric_module[4]):
             nn.init.zeros_(final_linear.weight)
             nn.init.zeros_(final_linear.bias)
+        nn.init.constant_(damage_linear.bias, float(np.log(initial_damage / (1.0 - initial_damage))))
 
     def stage_module(self, stage: ModelArchitecture | str) -> nn.Module:
         return getattr(self, ModelArchitecture.parse(stage).module_name + "_module")

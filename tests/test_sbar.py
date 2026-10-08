@@ -14,6 +14,48 @@ class QuadraticEnergy(torch.nn.Module):
 
 
 class SbarTests(unittest.TestCase):
+    def test_initial_damage_preserves_95_percent_of_warmup_stress(self):
+        model = ModularConstitutivePINN(np.eye(3), np.ones(3)/3, 0., 1.,
+            architecture=Mode.FREE_ENERGY_DAMAGE, initial_damage=0.05)
+        current = torch.tensor([[1., 2., 3.], [2., 3., 4.]])
+        torch.testing.assert_close(model.damage_module(current, model.norm_weights),
+                                   torch.full_like(current, 0.05))
+        model.eval()
+        model.activate_modules(Mode.FREE_ENERGY)
+        elastic = model.forward_sbar(current)
+        model.activate_modules(Mode.FREE_ENERGY_DAMAGE)
+        torch.testing.assert_close(model.forward_sbar(current, current), 0.95 * elastic)
+
+    def test_plateau_uses_validation_and_respects_minimum_lr(self):
+        import json
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+        from constitutive_pinn.sbar_data import SbarData
+        from train_sbar import fit_stage
+        from train_9_sbar import parser
+        args = parser().parse_args(['--damage-epochs', '4', '--lr-patience', '0',
+                                   '--min-lr', '0.0003'])
+        model = ModularConstitutivePINN(np.eye(3), np.ones(3)/3, 0., 1.,
+            architecture=Mode.FREE_ENERGY_DAMAGE, initial_damage=args.initial_damage)
+        current = np.array([[1,1,1], [2,1,0.5], [3,1,1/3], [2,1,0.5]], dtype=np.float32)
+        data = SbarData(current, np.maximum.accumulate(current, axis=0),
+                        np.ones((4,6), dtype=np.float32), np.eye(3), np.ones(3)/3,
+                        np.ones(4), current[:,0], np.zeros(4), 0, 1)
+        original_forward = model.forward_sbar
+        def fixed_validation(x, maximum):
+            if model.training:
+                return original_forward(x, maximum)
+            return torch.full((len(x), 6), 2.0)
+        with TemporaryDirectory() as tmp, patch('train_sbar.export'), patch.object(
+                model, 'forward_sbar', side_effect=fixed_validation):
+            fit_stage(model, data, Mode.FREE_ENERGY_DAMAGE, args, np.array([0,1,2]),
+                      np.array([3]), Path(tmp), 'synthetic.mat', joint=True)
+            history = json.loads((Path(tmp)/'history.json').read_text())
+        self.assertEqual([h['validation_loss'] for h in history], [1.0]*4)
+        np.testing.assert_allclose([h['learning_rate'] for h in history],
+                                   [0.001, 0.001, 0.0005, 0.0003])
+        self.assertEqual(history[-1]['next_learning_rate'], 0.0003)
+
     def test_analytic_integral_without_projection(self):
         directions = np.eye(3, dtype=np.float32)
         model = ModularConstitutivePINN(directions, np.ones(3)/3, 0., 1., architecture=Mode.FREE_ENERGY)

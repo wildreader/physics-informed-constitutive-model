@@ -124,13 +124,20 @@ def fit_stage(model, data, stage, args, train_idx, val_idx, directory, source_pa
               if k.startswith('free_energy_module.') and stage is Mode.FREE_ENERGY_DAMAGE and not joint}
     optimizer = torch.optim.Adam((p for p in model.parameters() if p.requires_grad),
                                  lr=args.learning_rate if learning_rate is None else learning_rate)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer,
-        step_size=getattr(args, 'lr_step_size', 200), gamma=getattr(args, 'lr_gamma', 0.5))
+    use_plateau = joint and getattr(args, 'lr_scheduler', 'step') == 'plateau'
+    if use_plateau:
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode='min', factor=args.lr_factor, patience=args.lr_patience,
+            threshold=args.lr_threshold, threshold_mode='rel', min_lr=args.min_lr)
+    else:
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer,
+            step_size=getattr(args, 'lr_step_size', 200), gamma=getattr(args, 'lr_gamma', 0.5))
     if epochs is None:
         epochs = args.free_energy_epochs if stage is Mode.FREE_ENERGY else args.damage_epochs
     best, best_state, history = float('inf'), None, []
     start = time.monotonic()
     for epoch in range(1, epochs+1):
+        epoch_lr = optimizer.param_groups[0]['lr']
         model.train()
         order = train_ids[torch.randperm(len(train_ids), device=device)]
         total = 0.0
@@ -151,7 +158,8 @@ def fit_stage(model, data, stage, args, train_idx, val_idx, directory, source_pa
         train_loss, val_loss = total/len(train_ids), val_total/len(val_ids)
         if not np.isfinite([train_loss, val_loss]).all():
             raise RuntimeError('Nonfinite training loss')
-        history.append({'epoch':epoch, 'train_loss':train_loss, 'validation_loss':val_loss})
+        history.append({'epoch':epoch, 'train_loss':train_loss, 'validation_loss':val_loss,
+                        'learning_rate':epoch_lr})
         if val_loss < best:
             best = val_loss
             best_state = {k:v.detach().cpu().clone() for k,v in model.state_dict().items()}
@@ -162,9 +170,16 @@ def fit_stage(model, data, stage, args, train_idx, val_idx, directory, source_pa
                         'directions':data.directions, 'weights':data.weights,
                         'data_path':str(Path(source_path).resolve()), 'options':vars(args),
                         'scale':scale.detach().cpu().numpy()}, directory/'model.pth')
-        scheduler.step()
+        if use_plateau:
+            scheduler.step(val_loss)
+        else:
+            scheduler.step()
+        next_lr = optimizer.param_groups[0]['lr']
+        history[-1]['next_learning_rate'] = next_lr
+        if next_lr < epoch_lr:
+            print(f'{stage.value} epoch {epoch}: learning rate {epoch_lr:.6g} -> {next_lr:.6g} (next epoch)', flush=True)
         if epoch == 1 or epoch % args.progress_interval == 0 or epoch == epochs:
-            print(f'{stage.value} {epoch}/{epochs}: train={train_loss:.6g}, val={val_loss:.6g}, best={best:.6g}, seconds={time.monotonic()-start:.1f}', flush=True)
+            print(f'{stage.value} {epoch}/{epochs}: train={train_loss:.6g}, val={val_loss:.6g}, best={best:.6g}, lr={epoch_lr:.6g}, seconds={time.monotonic()-start:.1f}', flush=True)
     model.load_state_dict(best_state)
     for k,v in frozen.items():
         if not torch.equal(model.state_dict()[k], v):

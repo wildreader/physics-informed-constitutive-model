@@ -16,16 +16,25 @@ def parser():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--data-root', default='data')
     p.add_argument('--materials', nargs='+', type=int, choices=range(1, 10), default=list(range(1, 10)))
-    p.add_argument('--output-dir', default='outputs/9_sbar_warmup')
+    p.add_argument('--output-dir', default='outputs/9_sbar_warmup_d005_plateau')
     p.add_argument('--warmup-epochs', type=int, default=100,
                    help='Energy-only initialization on damaged targets; 0 disables warmup')
     p.add_argument('--warmup-learning-rate', type=float, default=None,
                    help='Defaults to --learning-rate')
-    p.add_argument('--damage-epochs', type=int, default=500)
+    p.add_argument('--damage-epochs', type=int, default=1000)
+    p.add_argument('--initial-damage', type=float, default=0.05,
+                   help='Initial sigmoid damage output, not the linear bias')
     p.add_argument('--batch-size', type=int, default=256)
     p.add_argument('--learning-rate', type=float, default=0.001)
     p.add_argument('--lr-step-size', type=int, default=200)
     p.add_argument('--lr-gamma', type=float, default=0.5)
+    p.add_argument('--lr-scheduler', choices=['step', 'plateau'], default='plateau',
+                   help='Joint-stage scheduler; warmup retains StepLR')
+    p.add_argument('--lr-patience', type=int, default=40)
+    p.add_argument('--lr-factor', type=float, default=0.5)
+    p.add_argument('--lr-threshold', type=float, default=1e-4,
+                   help='Relative validation improvement required by plateau scheduler')
+    p.add_argument('--min-lr', type=float, default=1e-5)
     p.add_argument('--seed', type=int, default=42)
     p.add_argument('--validation-fraction', type=float, default=0.2)
     p.add_argument('--device', choices=['auto', 'cpu', 'cuda'], default='auto')
@@ -76,6 +85,12 @@ def main(arguments=None):
         raise ValueError('Invalid validation fraction/learning rate')
     if args.warmup_epochs < 0 or args.lr_step_size <= 0 or not 0 < args.lr_gamma <= 1:
         raise ValueError('Invalid warmup epochs or scheduler settings')
+    if not np.isfinite(args.initial_damage) or not 0 < args.initial_damage < 1:
+        raise ValueError('Initial damage must be finite and strictly between 0 and 1')
+    if (args.lr_patience < 0 or not 0 < args.lr_factor < 1
+            or not 0 <= args.lr_threshold < 1
+            or not np.isfinite(args.min_lr) or not 0 < args.min_lr <= args.learning_rate):
+        raise ValueError('Invalid plateau scheduler settings')
     if args.warmup_learning_rate is not None and (not np.isfinite(args.warmup_learning_rate) or args.warmup_learning_rate <= 0):
         raise ValueError('Warmup learning rate must be finite and positive')
     if args.audit_only and args.predict_only:
@@ -107,7 +122,7 @@ def main(arguments=None):
             test_size=args.validation_fraction, random_state=args.seed, stratify=train.case_index)
         model = ModularConstitutivePINN(train.directions, train.weights,
             float(train.current[train_idx].mean()), float(train.current[train_idx].std()),
-            architecture=Mode.FREE_ENERGY_DAMAGE).to(device)
+            architecture=Mode.FREE_ENERGY_DAMAGE, initial_damage=args.initial_damage).to(device)
         if args.predict_only:
             ckpt = torch.load(output/'proportional'/'model.pth', map_location='cpu', weights_only=False)
             if (ckpt.get('format') != 'sbar_v1' or ckpt.get('stress_measure') != 'S_bar'
