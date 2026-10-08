@@ -18,6 +18,7 @@
 - lambda_y = 1 + ratio*(lambda_x-1)，lambda_z = 1/(lambda_x*lambda_y)。各工况历史独立重置。
 - 方向与权重直接来自 `quadrature`，110 个方向，权重和为 1。
 - 应力分量沿用项目的 `11,22,33,12,13,23` 顺序；本数据三个剪切分量接近机器零，仅凭这组双轴标签无法单独辨认剪切分量之间的排列。
+- ![image-20261007110022689](C:\Users\YizhenZhang\AppData\Roaming\Typora\typora-user-images\image-20261007110022689.png)
 
 ## 物理接口与监督目标
 

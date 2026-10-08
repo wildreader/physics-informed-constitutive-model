@@ -67,7 +67,7 @@ def metrics(predicted, target):
 def export(model, data, current, maximum, train_idx, val_idx, directory, history, batch_size):
     pred = predict(model, current, maximum, batch_size)
     reports = {name: metrics(pred[ix], data.target[ix]) for name, ix in
-               [('all', np.arange(len(pred))), ('train', train_idx), ('validation', val_idx)]}
+               [('all', np.arange(len(pred))), ('train', train_idx), ('validation', val_idx)] if len(ix)}
     reports['cases'] = {str(int(c)): metrics(pred[data.case_index == c], data.target[data.case_index == c])
                         for c in np.unique(data.case_index)}
     (directory / 'metrics.json').write_text(json.dumps(reports, indent=2), encoding='utf-8')
@@ -76,7 +76,8 @@ def export(model, data, current, maximum, train_idx, val_idx, directory, history
         'sample_indices_matlab': np.arange(1, len(pred)+1),
         'train_indices_matlab': train_idx+1, 'validation_indices_matlab': val_idx+1,
         'lambdaX': data.lambda_x, 'caseIndex': data.case_index,
-        'biaxialRatio': data.ratios, 'stress_measure': 'S_bar',
+        **({'lambdaYPrestretch': data.prestretch} if data.prestretch is not None
+           else {'biaxialRatio': data.ratios}), 'stress_measure': 'S_bar',
         'voigt_order': '11,22,33,12,13,23'})
     for c in np.unique(data.case_index):
         ix = np.flatnonzero(data.case_index == c)
@@ -87,21 +88,25 @@ def export(model, data, current, maximum, train_idx, val_idx, directory, history
             ax.set(xlabel='lambda_x', ylabel='S_bar '+['11','22','33','12','13','23'][k])
             ax.grid(alpha=0.2)
         axes[0, 0].legend()
-        fig.suptitle(f'Case {int(c)} / biaxial ratio {data.ratios[ix[0]]:g} / original path order')
+        label = (f'y prestretch {data.prestretch[ix[0]]:g}' if data.prestretch is not None
+                 else f'biaxial ratio {data.ratios[ix[0]]:g}')
+        fig.suptitle(f'Case {int(c)} / {label} / original path order')
         fig.savefig(directory / f'case_{int(c)}.png', dpi=140)
         plt.close(fig)
-    fig, ax = plt.subplots(figsize=(7, 4), constrained_layout=True)
-    ax.semilogy([h['train_loss'] for h in history], label='Training batches')
-    ax.semilogy([h['validation_loss'] for h in history], label='Validation')
-    ax.set(xlabel='Epoch', ylabel='RMS-scaled S_bar MSE')
-    ax.legend()
-    fig.savefig(directory / 'loss.png', dpi=140)
-    plt.close(fig)
+    if history:
+        fig, ax = plt.subplots(figsize=(7, 4), constrained_layout=True)
+        ax.semilogy([h['train_loss'] for h in history], label='Training batches')
+        ax.semilogy([h['validation_loss'] for h in history], label='Validation')
+        ax.set(xlabel='Epoch', ylabel='RMS-scaled S_bar MSE')
+        ax.legend()
+        fig.savefig(directory / 'loss.png', dpi=140)
+        plt.close(fig)
     print('Full/validation normal relative L2:', reports['all']['normal_relative_l2'],
-          reports['validation']['normal_relative_l2'], flush=True)
+          reports.get('validation', {}).get('normal_relative_l2', 'N/A'), flush=True)
 
 
-def fit_stage(model, data, stage, args, train_idx, val_idx, directory, source_path):
+def fit_stage(model, data, stage, args, train_idx, val_idx, directory, source_path, *, joint=False,
+              epochs=None, learning_rate=None, strategy=None):
     directory.mkdir(parents=True, exist_ok=True)
     device = next(model.parameters()).device
     current, maximum, target = [torch.as_tensor(a, device=device) for a in
@@ -109,12 +114,20 @@ def fit_stage(model, data, stage, args, train_idx, val_idx, directory, source_pa
     scale = torch.as_tensor(component_rms_scale(data.target[train_idx]), device=device)
     train_ids = torch.as_tensor(train_idx, device=device)
     val_ids = torch.as_tensor(val_idx, device=device)
-    model.set_training_stage(stage)
+    if joint:
+        if stage is not Mode.FREE_ENERGY_DAMAGE:
+            raise ValueError('Joint S_bar fitting requires free_energy_damage')
+        model.activate_modules(stage)
+    else:
+        model.set_training_stage(stage)
     frozen = {k: v.detach().clone() for k, v in model.state_dict().items()
-              if k.startswith('free_energy_module.') and stage is Mode.FREE_ENERGY_DAMAGE}
-    optimizer = torch.optim.Adam(model.stage_parameters(stage), lr=args.learning_rate)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=200, gamma=0.5)
-    epochs = args.free_energy_epochs if stage is Mode.FREE_ENERGY else args.damage_epochs
+              if k.startswith('free_energy_module.') and stage is Mode.FREE_ENERGY_DAMAGE and not joint}
+    optimizer = torch.optim.Adam((p for p in model.parameters() if p.requires_grad),
+                                 lr=args.learning_rate if learning_rate is None else learning_rate)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer,
+        step_size=getattr(args, 'lr_step_size', 200), gamma=getattr(args, 'lr_gamma', 0.5))
+    if epochs is None:
+        epochs = args.free_energy_epochs if stage is Mode.FREE_ENERGY else args.damage_epochs
     best, best_state, history = float('inf'), None, []
     start = time.monotonic()
     for epoch in range(1, epochs+1):
@@ -143,6 +156,7 @@ def fit_stage(model, data, stage, args, train_idx, val_idx, directory, source_pa
             best = val_loss
             best_state = {k:v.detach().cpu().clone() for k,v in model.state_dict().items()}
             torch.save({'format':'sbar_v1', 'stress_measure':'S_bar', 'architecture':stage.value,
+                        'training_strategy': strategy or ('joint' if joint else 'sequential'),
                         'state_dict':best_state, 'best_epoch':epoch, 'best_validation_loss':best,
                         'train_indices':train_idx, 'validation_indices':val_idx,
                         'directions':data.directions, 'weights':data.weights,

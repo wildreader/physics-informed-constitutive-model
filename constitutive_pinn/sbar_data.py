@@ -17,6 +17,7 @@ class SbarData:
     ratios: np.ndarray
     current_channel: int
     maximum_channel: int
+    prestretch: np.ndarray | None = None
 
 
 def load_sbar_data(path: str | Path) -> SbarData:
@@ -35,6 +36,11 @@ def load_sbar_data(path: str | Path) -> SbarData:
         raise ValueError('Nonfinite data or nonpositive stretches')
     stretches = np.column_stack([loading['lambdaX'], loading['lambdaY'], loading['lambdaZ']])
     reconstructed = np.sqrt(stretches**2 @ (directions**2).T)
+    prestretch = (np.asarray(loading['lambdaYPrestretch']).reshape(-1)
+                  if 'lambdaYPrestretch' in loading else None)
+    if prestretch is not None and (prestretch.size != n or
+            not np.isfinite(prestretch).all() or np.any(prestretch < 1)):
+        raise ValueError('Invalid lambdaYPrestretch metadata')
     candidates = []
     for cur, hist in ((0, 1), (1, 0)):
         valid = np.allclose(x[cur].T, reconstructed, rtol=1e-7, atol=1e-9)
@@ -43,6 +49,14 @@ def load_sbar_data(path: str | Path) -> SbarData:
             if np.any(np.diff(indices) != 1):
                 raise ValueError('Case samples must be contiguous and in chronological order')
             expected = np.maximum.accumulate(np.maximum(x[cur][:, indices], 1), axis=1)
+            if prestretch is not None:
+                # Saved rows contain only the x cycles. Retain the preceding
+                # y path 1 -> p -> 1 (x=1, z=1/y) in the directional history.
+                p = prestretch[indices[0]]
+                if not np.all(prestretch[indices] == p):
+                    raise ValueError('Prestretch must be constant within each case')
+                seed = np.maximum(1, np.sqrt(directions**2 @ np.array([1, p, 1/p])**2))
+                expected = np.maximum(expected, seed[:, None])
             valid &= np.allclose(x[hist][:, indices], expected, rtol=1e-7, atol=1e-9)
         if valid:
             candidates.append((cur, hist))
@@ -52,7 +66,8 @@ def load_sbar_data(path: str | Path) -> SbarData:
     return SbarData(x[cur].T.astype(np.float32), x[hist].T.astype(np.float32),
                     y.T.astype(np.float32), directions.astype(np.float32),
                     weights.astype(np.float32), cases, stretches[:, 0],
-                    np.asarray(loading['biaxialRatio']).reshape(-1), cur, hist)
+                    np.asarray(loading.get('biaxialRatio', np.full(n, np.nan))).reshape(-1),
+                    cur, hist, prestretch)
 
 
 def assert_sbar_pair(a: SbarData, b: SbarData) -> None:
