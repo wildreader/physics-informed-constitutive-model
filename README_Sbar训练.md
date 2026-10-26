@@ -1,5 +1,7 @@
 # 比例双轴 S_bar：无损伤与损伤分阶段训练
 
+新增九材料“110 个自由能 → 110 个损伤”串联实验见 [串联训练说明](README_Sbar串联训练.md)。新入口为 `train_9_sbar_serial.py` / `pred_9_sbar_serial.py`；原最大伸长驱动模式仍为旧入口默认值。
+
 本文对应最新功能提交 `632cd56`（新增 S_bar 无损伤/损伤拟合），按数据 → 物理接口 → 训练 → 预测 → 结果组织。通用网络结构与层数见 [主 README 第 2 节](README.md#model)，初始化见 [第 4 节](README.md#hyperparameters)，MSE/RMSE 定义见 [第 6 节](README.md#metrics)。
 
 本流程使用同一个三模块模型，只启用自由能和可选损伤；通过 `forward_sbar()` 输出未投影 S_bar。环境安装按 [快速开始](README.md#quick-start) 完成后，可直接运行本文命令，现有两份 MAT 无需重新生成。

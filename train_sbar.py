@@ -33,6 +33,7 @@ def parser():
     p.add_argument('--damage-data', default='proportional_biaxial_Sbar.mat')
     p.add_argument('--elastic-checkpoint', default=None)
     p.add_argument('--output-dir', default='outputs/sbar')
+    p.add_argument('--damage-input', choices=['maximum_stretch', 'free_energy'], default='maximum_stretch')
     p.add_argument('--free-energy-epochs', type=int, default=500)
     p.add_argument('--damage-epochs', type=int, default=500)
     p.add_argument('--batch-size', type=int, default=256)
@@ -76,8 +77,9 @@ def export(model, data, current, maximum, train_idx, val_idx, directory, history
         'sample_indices_matlab': np.arange(1, len(pred)+1),
         'train_indices_matlab': train_idx+1, 'validation_indices_matlab': val_idx+1,
         'lambdaX': data.lambda_x, 'caseIndex': data.case_index,
-        **({'lambdaYPrestretch': data.prestretch} if data.prestretch is not None
-           else {'biaxialRatio': data.ratios}), 'stress_measure': 'S_bar',
+        'biaxialRatio': data.ratios,
+        **({'lambdaYPrestretch': data.prestretch} if data.prestretch is not None else {}),
+        'stress_measure': 'S_bar',
         'voigt_order': '11,22,33,12,13,23'})
     for c in np.unique(data.case_index):
         ix = np.flatnonzero(data.case_index == c)
@@ -88,7 +90,7 @@ def export(model, data, current, maximum, train_idx, val_idx, directory, history
             ax.set(xlabel='lambda_x', ylabel='S_bar '+['11','22','33','12','13','23'][k])
             ax.grid(alpha=0.2)
         axes[0, 0].legend()
-        label = (f'y prestretch {data.prestretch[ix[0]]:g}' if data.prestretch is not None
+        label = (f'y prestretch {data.prestretch[ix[0]]:g}' if data.prestretch is not None and np.isfinite(data.prestretch[ix[0]])
                  else f'biaxial ratio {data.ratios[ix[0]]:g}')
         fig.suptitle(f'Case {int(c)} / {label} / original path order')
         fig.savefig(directory / f'case_{int(c)}.png', dpi=140)
@@ -164,6 +166,7 @@ def fit_stage(model, data, stage, args, train_idx, val_idx, directory, source_pa
             best = val_loss
             best_state = {k:v.detach().cpu().clone() for k,v in model.state_dict().items()}
             torch.save({'format':'sbar_v1', 'stress_measure':'S_bar', 'architecture':stage.value,
+                        'damage_input': model.damage_input,
                         'training_strategy': strategy or ('joint' if joint else 'sequential'),
                         'state_dict':best_state, 'best_epoch':epoch, 'best_validation_loss':best,
                         'train_indices':train_idx, 'validation_indices':val_idx,
@@ -208,7 +211,7 @@ def main(arguments=None):
     architecture = Mode.FREE_ENERGY if args.mode == 'no_damage' else Mode.FREE_ENERGY_DAMAGE
     mean, std = float(elastic.current[train_idx].mean()), float(elastic.current[train_idx].std())
     model = ModularConstitutivePINN(elastic.directions, elastic.weights, mean, std,
-                                   architecture=architecture).to(device)
+                                   architecture=architecture, damage_input=args.damage_input).to(device)
     output = Path(args.output_dir)
     print(f'Device={device}; Xtrain=(2,{elastic.current.shape[1]},{len(elastic.current)}); current channel={elastic.current_channel}; maximum channel={elastic.maximum_channel}', flush=True)
     if args.elastic_checkpoint:

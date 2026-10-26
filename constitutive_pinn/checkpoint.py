@@ -23,6 +23,7 @@ class LoadedCheckpoint:
     delta_j_ref: float | None
     legacy: bool
     format_version: int = 0
+    damage_input: str = "maximum_stretch"
 
 
 def save_checkpoint(
@@ -42,6 +43,7 @@ def save_checkpoint(
     payload = {
         "format_version": CHECKPOINT_FORMAT_VERSION,
         "architecture": architecture.value,
+        "damage_input": model.damage_input,
         "enabled_modules": {
             "free_energy": True,
             "damage": architecture.use_damage,
@@ -103,6 +105,7 @@ def load_checkpoint(
             delta_j_ref=_optional_float(normalization.get("delta_j_ref")),
             legacy=False,
             format_version=version,
+            damage_input=raw.get("damage_input", "maximum_stretch"),
         )
 
     if not isinstance(raw, dict) or not all(
@@ -133,6 +136,9 @@ def restore_checkpoint(model: torch.nn.Module, checkpoint: LoadedCheckpoint) -> 
     """新版严格加载；旧版只允许补齐当时不存在的关闭模块。"""
     if model.architecture is not checkpoint.architecture:
         raise ValueError("模型与检查点的模块组合不匹配。")
+    if checkpoint.damage_input not in {"maximum_stretch", "free_energy"}:
+        raise ValueError("检查点损伤输入模式无效。")
+    model.damage_input = checkpoint.damage_input
     if checkpoint.format_version == CHECKPOINT_FORMAT_VERSION:
         model.load_state_dict(checkpoint.state_dict, strict=True)
         return

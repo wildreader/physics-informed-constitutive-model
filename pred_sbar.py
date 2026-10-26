@@ -38,7 +38,8 @@ def main(arguments=None):
         raise ValueError('Saved split differs from dataset length')
     state = checkpoint['state_dict']
     model = ModularConstitutivePINN(data.directions, data.weights,
-            float(state['x_mean']), float(state['x_std']), architecture=stage).to(device)
+            float(state['x_mean']), float(state['x_std']), architecture=stage,
+            damage_input=checkpoint.get('damage_input', 'maximum_stretch')).to(device)
     model.load_state_dict(state, strict=True)
     current = torch.as_tensor(data.current, device=device)
     maximum = torch.as_tensor(data.maximum, device=device)

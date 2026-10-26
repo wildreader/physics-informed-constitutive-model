@@ -36,10 +36,14 @@ class ModularConstitutivePINN(nn.Module):
         architecture: ModelArchitecture | str = ModelArchitecture.FULL,
         delta_j_ref: float = DEFAULT_DELTA_J_REF,
         initial_damage: float = 0.5,
+        damage_input: str = "maximum_stretch",
     ) -> None:
         super().__init__()
         self.architecture = ModelArchitecture.parse(architecture)
         self.active_architecture = self.architecture
+        if damage_input not in {"maximum_stretch", "free_energy"}:
+            raise ValueError(f"Unknown damage input: {damage_input!r}")
+        self.damage_input = damage_input
         self.delta_J_ref = float(delta_j_ref)
         if self.delta_J_ref <= 0.0:
             raise ValueError(
@@ -136,7 +140,7 @@ class ModularConstitutivePINN(nn.Module):
 
     def forward_sbar(self, lambda_current: torch.Tensor,
                      lambda_maximum: torch.Tensor | None = None) -> torch.Tensor:
-        """Return unprojected S_bar, holding supplied history fixed during differentiation."""
+        """Return S_bar; history is fixed, but serial energy remains differentiable."""
         if self.use_volumetric:
             raise ValueError("S_bar output requires the volumetric branch to be disabled.")
         return self._compute_sbar(lambda_current, lambda_maximum)
@@ -160,14 +164,19 @@ class ModularConstitutivePINN(nn.Module):
             phi = self.free_energy_module(current_normalized, self.norm_weights)
 
             if self.use_damage:
-                if lambda_maximum is None:
-                    raise ValueError(
-                        f"{self.architecture.value} 架构需要 lambda_maximum 输入。"
-                    )
-                maximum_normalized = (
-                    lambda_maximum.detach() - self.x_mean
-                ) / (self.x_std + 1.0e-8)
-                damage = self.damage_module(maximum_normalized, self.norm_weights)
+                if self.damage_input == "free_energy":
+                    # Direct serial connection: no stretch normalization or detach.
+                    # Differentiating (1-d(phi))*phi includes the damage chain rule.
+                    damage_values = phi
+                else:
+                    if lambda_maximum is None:
+                        raise ValueError(
+                            f"{self.architecture.value} 架构需要 lambda_maximum 输入。"
+                        )
+                    damage_values = (
+                        lambda_maximum.detach() - self.x_mean
+                    ) / (self.x_std + 1.0e-8)
+                damage = self.damage_module(damage_values, self.norm_weights)
                 direction_energy = (1.0 - damage) * phi
             else:
                 # 自由能阶段直接使用 phi，完全跳过损伤计算及乘法。

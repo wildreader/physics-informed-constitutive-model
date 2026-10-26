@@ -1,10 +1,31 @@
 # 9种不同的变形和损伤耦合系数下的多工况预拉伸和比例双轴工况的损伤Sbar
 
-## 2026-10-08：初始损伤 0.05 + 联合 1000 轮 + 平台降学习率
+## 2026-10-09：两类加载路径合并拟合训练
 
-本节覆盖下方旧记录中的默认值。`train_9_sbar.py` 现在默认预热 100 轮、联合训练 1000 轮，初始损伤 `--initial-damage 0.05`，联合阶段使用 `--lr-scheduler plateau`。初始学习率仍为 0.001，batch size 仍为 256，网络宽度和深度不变。新默认输出为 `outputs/9_sbar_warmup_d005_plateau`，旧结果保留。
+`train_9_sbar.py` 默认 `--training-data combined`，**每种材料将比例双轴 24005 点与预拉伸 19204 点合并为 43209 点**。**按 9 个工况分层随机划分 80% 训练、20% 验证；**按 **9 个工况分层随机划分：比例双轴有 5 个工况，预拉伸有 4 个工况；每个工况约 80% 用于训练、20% 用于验证。**两类路径都参与预热和联合训练。归一化只由合并数据的训练子集计算，原有方向历史最大值原样保留。它是拟合能力实验，预拉伸不再作为独立测试集。联合epoch500轮。
 
-**损伤 Sigmoid 前的最后一个线性层权重置零，偏置设为 `log(d0/(1-d0))`；**d0=0.05 时偏置约为 -2.944439。0.05 是损伤初始输出，不是偏置本身，也不是训练中固定的损伤。预热不执行损伤模块；切换时保留预热最佳自由能和该损伤初始化。通用模型类默认仍为 0.5，九材料入口显式传入 0.05，兼容其他入口。
+预热及联合阶段分别以自身最低验证 loss 保存并恢复最佳模型。联合结束后完整预测合并数据，并分别按原始行顺序导出两类数据。新默认输出目录为 `outputs/9_sbar_combined/<材料号>/`：
+
+- `warmup/`：合并数据预热模型和曲线。
+- `combined/`：最终最佳 `model.pth`、`history.json`、`loss.png`、合并预测及指标；工况 1–5 为比例双轴，6–9 为预拉伸。
+- `proportional/`：完整比例双轴预测、5 个工况图和分训练/验证误差。
+- `prestretch_fit/`：完整预拉伸预测、4 个工况图和分训练/验证误差。
+
+两类独立导出的 MAT 中训练/验证索引均映射回各自文件的行号。合并 MAT 同时保存 `biaxialRatio` 与 `lambdaYPrestretch`，不适用项为 NaN。`data_audit.json` 记录两个源文件路径。
+
+PowerShell 全部九材料（这里显式使用初始损伤 0.06，可自行修改）：
+
+```powershell
+& 'C:/programming/anaconda3/envs/torch/python.exe' train_9_sbar.py --training-data combined --initial-damage 0.06 --warmup-epochs 100 --damage-epochs 500 --lr-scheduler plateau --output-dir outputs/9_sbar_combined_d006_wide
+```
+
+只跑 9 号加 `--materials 9`；重绘同一实验加 `--predict-only` 并使用相同输出目录和网络结构。保留旧训练方式：`--training-data proportional`，此时仅比例双轴用于训练，预拉伸输出到 `prestretch_test/`。旧检查点重绘也应显式指定 proportional。
+
+## 2026-10-08：初始损伤 0.06 + 联合 1000 轮 + 平台降学习率
+
+本节覆盖下方旧记录中的默认值。`train_9_sbar.py` 现在默认预热 100 轮、联合训练 1000 轮，初始损伤 `--initial-damage 0.05`，联合阶段使用 `--lr-scheduler plateau`。**初始学习率仍为 0.001**，batch size 仍为 256，网络宽度和深度不变。新默认输出为 `outputs/9_sbar_warmup_d005_plateau`，旧结果保留。
+
+**损伤 Sigmoid 前的最后一个线性层权重置零，偏置设为 `log(d0/(1-d0))`；d0=0.05 时偏置约为 -2.944439。0.05 是损伤初始输出，不是偏置本身，**也不是训练中固定的损伤。预热不执行损伤模块；切换时保留预热最佳自由能和该损伤初始化。通用模型类默认仍为 0.5，九材料入口显式传入 0.05，兼容其他入口。
 
 **联合阶段使用** `ReduceLROnPlateau(mode='min', factor=0.5, patience=40, threshold=1e-4, threshold_mode='rel', min_lr=1e-5)`，**每轮验证完成后调用 `scheduler.step(val_loss)`。验证损失低于调度器历史最佳值乘 `(1-1e-4)` 才算有效改善；**连续无有效改善的轮数超过 40 时（第 41 轮）将学习率减半，下一轮生效，最低 1e-5。改善或降学习率后重新计数。**预热保留 StepLR**；**联合阶段不叠加 StepLR。**它不是早停，仍训练完 1000 轮并恢复验证 loss 最低的模型。
 
@@ -13,14 +34,16 @@
 在项目根目录 PowerShell 中只运行材料 9：
 
 ```powershell
-& 'C:/programming/anaconda3/envs/torch/python.exe' train_9_sbar.py --materials 9 --initial-damage 0.05 --warmup-epochs 100 --damage-epochs 1000 --lr-scheduler plateau --output-dir outputs/9_sbar_warmup_d005_plateau
+& 'C:/programming/anaconda3/envs/torch/python.exe' train_9_sbar.py --materials 9 --initial-damage 0.06 --warmup-epochs 100 --damage-epochs 1000 --lr-scheduler plateau --output-dir outputs/9_sbar_warmup_d006_plateau_wide
 ```
 
 这是重新训练，不是从旧联合检查点续训。未启动本次 1000 轮正式训练。17 项测试通过，包括初始损伤对应 95% 应力、平台调度使用验证损失并守住学习率下限，以及旧顺序训练流程。旧实验重绘请显式指定 `--predict-only --output-dir outputs/9_sbar_warmup`。
 
+![image-20261008223759074](C:\Users\YizhenZhang\AppData\Roaming\Typora\typora-user-images\image-20261008223759074.png)
+
 ## 2026-10-08：自由能预热后联合训练
 
-当前默认流程改为：每种材料自由能预热 100 epoch → 恢复最佳预热权重 → 自由能与损伤联合训练 500 epoch → 恢复最佳联合模型 → 完整比例双轴拟合及预拉伸测试。两阶段使用同一比例双轴训练/验证划分和归一化统计量；切换时重建 Adam 和 StepLR，不重新初始化模型，不冻结自由能。体积分支始终关闭。
+当前默认流程改为：每种材料自由能预热 100 epoch → 恢复最佳预热权重 → 自由能与损伤联合训练 500 epoch → 恢复最佳联合模型 → **完整比例双轴拟合及预拉伸测试。**两阶段使用同一比例双轴训练/验证划分和归一化统计量；切换时重建 Adam 和 StepLR，不重新初始化模型，不冻结自由能。体积分支始终关闭。
 
 **没有无损伤标签，因此预热仍使用损伤比例双轴标签，暂时关闭损伤支路，只学习自由能的初始拟合。它不是无损伤自由能标定。相同当前伸长在不同历史下可以有不同应力，纯自由能阶段无法区分这些历史，因此预热曲线可能折中、加载卸载重合；需要第二阶段学习历史效应。预热能否改善最终误差要由对比实验判断，不能保证。**
 
@@ -71,13 +94,15 @@ C:\programming\anaconda3\envs\torch\python.exe train_9_sbar.py --predict-only --
 
 - `LocalFeatureNetwork`：`1→32→32→6`，自由能/损伤各有独立的一套，两个隐藏层宽度 32。
 - `FreeEnergyPredictor` 和 `DamagePredictor`：`12→64→64→1`，两个隐藏层宽度 64；输出分别使用 Softplus 和 Sigmoid。
-- `6` 是局部特征维数，`12` 是局部与全局特征拼接后的维数，不宜当作独立隐藏宽度随意修改；池化中的 reshape 也依赖这些维数。
+- **`6` 是局部特征维数，`12` 是局部与全局特征拼接后的维数，不宜当作独立隐藏宽度随意修改；池化中的 reshape 也依赖这些维数。**
 
 改隐藏宽度需要在这些类的 `nn.Linear` 中同步修改相邻层的输入/输出维度。改隐藏层数还涉及 `model.py` 内损伤末层的**初始化**索引 `predictor[4]`，必须同步处理。改变结构后旧检查点通常不能直接加载；应使用新输出目录重新训练，并在预测时保持相同结构。这些类也被旧训练入口使用，直接修改会影响所有入口。因此当前先比较训练策略和优化参数，再决定是否需要结构调整。
 
 旧结果检查：材料 2、3、5、6、9 的完整比例双轴相对 L2 约为 10.8%、23.6%、19.3%、23.6%、23.6%，训练拟合本身已存在较大误差。曲线单调或重合不能单独证明某一种原因；本次改动仅检验预热初始化是否有帮助。
 
 本次验证：15 项测试通过，覆盖最佳预热权重继承、预热时损伤/体积分支不变、联合更新和零预热兼容路径。材料 2 的真实数据已完成 1 轮预热 + 1 轮联合训练的流程验证，输出在 `outputs/9_sbar_warmup_smoke`；未执行九种材料的正式预热实验，不能据此判断新策略的最终拟合质量。
+
+![image-20261026194413103](C:\Users\YizhenZhang\AppData\Roaming\Typora\typora-user-images\image-20261026194413103.png)
 
 ## 2026-10-07：原直接联合训练记录（默认值以以上更新为准）
 
@@ -100,6 +125,10 @@ C:\programming\anaconda3\envs\torch\python.exe train_9_sbar.py --predict-only --
 | 9 | 1.0 | 1.0 |
 
 系数对应关系沿用本文件原始记录和 `data/info.txt`，系数不作为额外网络输入。每个编号独立初始化、训练、选最佳模型和预测，不跨材料继承参数或归一化统计量。
+
+**9中材料的数据集都是损伤数据集（包含每个样本点下110个方向的应变和最大应变，以及S_bar应力）**
+
+**每种材料将比例双轴 24005 点与预拉伸 19204 点合并为 43209 点**。**按 9 个工况分层随机划分 80% 训练、20% 验证；**按 **9 个工况分层随机划分：比例双轴有 5 个工况，预拉伸有 4 个工况；每个工况约 80% 用于训练、20% 用于验证。**
 
 - **训练数据：`proportional_biaxial_Sbar.mat`，比例为 0、0.25、0.5、0.75、1，每工况 4801 点，共 24005 点。**
 - **测试数据：`orthogonal_prestretch_x_cyclic_Sbar.mat`，y 预拉伸峰值为 1.01、4、6、8，每工况保存正式 x 循环的 4801 点，共 19204 点。**
@@ -185,5 +214,5 @@ python train_9_sbar.py --predict-only --materials 1
 8   0.5     4    1.0   4
 9   1.0     4    1.0   4
 
-里面有9个文件夹  对应于9种参数组合，变形耦合系数 0 0.5 1.0  和  损伤耦合系数 0  0.5  1.0
+里面有9个文件夹  对应于9种参数组合，**变形耦合系数 0 0.5 1.0  和  损伤耦合系数 0  0.5  1.0**
 

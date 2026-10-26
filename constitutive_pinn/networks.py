@@ -7,56 +7,56 @@ import torch.nn as nn
 
 
 class LocalFeatureNetwork(nn.Sequential):
-    """逐微球方向共享的局部特征提取器：1-32-32-6。"""
+    """逐微球方向共享的局部特征提取器：1-64-64-6。"""
 
     def __init__(self) -> None:
         super().__init__(
-            nn.Linear(1, 32),
+            nn.Linear(1, 64),
             nn.Softplus(),
-            nn.Linear(32, 32),
+            nn.Linear(64, 64),
             nn.Softplus(),
-            nn.Linear(32, 6),
+            nn.Linear(64, 6),
         )
 
 
 class FreeEnergyPredictor(nn.Sequential):
-    """自由能预测器：12-64-64-1，输出非负。"""
+    """自由能预测器：12-128-128-1，输出非负。"""
 
     def __init__(self) -> None:
         super().__init__(
-            nn.Linear(12, 64),
+            nn.Linear(12, 128),
             nn.Softplus(),
-            nn.Linear(64, 64),
+            nn.Linear(128, 128),
             nn.Softplus(),
-            nn.Linear(64, 1),
+            nn.Linear(128, 1),
             nn.Softplus(),
         )
 
 
 class DamagePredictor(nn.Sequential):
-    """损伤预测器：12-64-64-1，输出范围为 [0, 1]。"""
+    """损伤预测器：12-128-128-1，输出范围为 [0, 1]。"""
 
     def __init__(self) -> None:
         super().__init__(
-            nn.Linear(12, 64),
+            nn.Linear(12, 128),
             nn.Softplus(),
-            nn.Linear(64, 64),
+            nn.Linear(128, 128),
             nn.Softplus(),
-            nn.Linear(64, 1),
+            nn.Linear(128, 1),
             nn.Sigmoid(),
         )
 
 
 class VolumetricEnergyNetwork(nn.Sequential):
-    """体积自由能网络：J_hat -> U_vol，结构为 1-32-32-1。"""
+    """体积自由能网络：J_hat -> U_vol，结构为 1-128-128-1。"""
 
     def __init__(self) -> None:
         super().__init__(
-            nn.Linear(1, 32),
+            nn.Linear(1, 128),
             nn.Softplus(),
-            nn.Linear(32, 32),
+            nn.Linear(128, 128),
             nn.Softplus(),
-            nn.Linear(32, 1),
+            nn.Linear(128, 1),
         )
 
 
@@ -75,7 +75,7 @@ class FreeEnergyModule(nn.Module):
 
 
 class DamageModule(nn.Module):
-    """损伤之路：历史最大伸长驱动的局部/全局损伤预测。"""
+    """损伤之路：由模型选择最大伸长或自由能驱动，保持局部/全局网络不变。"""
 
     def __init__(self) -> None:
         super().__init__()

@@ -14,6 +14,29 @@ class QuadraticEnergy(torch.nn.Module):
 
 
 class SbarTests(unittest.TestCase):
+    def test_combined_data_preserves_histories_and_maps_split_indices(self):
+        from train_9_sbar import combine_data, local_indices
+        from sklearn.model_selection import train_test_split
+        a = load_sbar_data('data/9/proportional_biaxial_Sbar.mat')
+        b = load_sbar_data('data/9/orthogonal_prestretch_x_cyclic_Sbar.mat')
+        combined = combine_data(a, b)
+        n = len(a.current)
+        self.assertEqual(len(combined.current), 43209)
+        np.testing.assert_array_equal(np.unique(combined.case_index), np.arange(1, 10))
+        np.testing.assert_array_equal(combined.maximum[n:], b.maximum)
+        np.testing.assert_array_equal(combined.target[:n], a.target)
+        np.testing.assert_array_equal(combined.target[n:], b.target)
+        self.assertTrue(np.isnan(combined.prestretch[:n]).all())
+        np.testing.assert_array_equal(combined.prestretch[n:], b.prestretch)
+        train, val = train_test_split(np.arange(len(combined.current)), test_size=0.2,
+                                     random_state=42, stratify=combined.case_index)
+        for start, count in ((0, n), (n, len(b.current))):
+            ti, vi = local_indices(train, start, count), local_indices(val, start, count)
+            self.assertEqual(len(np.intersect1d(ti, vi)), 0)
+            np.testing.assert_array_equal(np.sort(np.r_[ti, vi]), np.arange(count))
+        self.assertEqual(len(np.unique(combined.case_index[train])), 9)
+        self.assertEqual(len(np.unique(combined.case_index[val])), 9)
+
     def test_initial_damage_preserves_95_percent_of_warmup_stress(self):
         model = ModularConstitutivePINN(np.eye(3), np.ones(3)/3, 0., 1.,
             architecture=Mode.FREE_ENERGY_DAMAGE, initial_damage=0.05)
