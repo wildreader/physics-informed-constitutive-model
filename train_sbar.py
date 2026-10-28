@@ -33,7 +33,7 @@ def parser():
     p.add_argument('--damage-data', default='proportional_biaxial_Sbar.mat')
     p.add_argument('--elastic-checkpoint', default=None)
     p.add_argument('--output-dir', default='outputs/sbar')
-    p.add_argument('--damage-input', choices=['maximum_stretch', 'free_energy'], default='maximum_stretch')
+    p.add_argument('--damage-input', choices=['maximum_stretch', 'maximum_free_energy'], default='maximum_stretch')
     p.add_argument('--free-energy-epochs', type=int, default=500)
     p.add_argument('--damage-epochs', type=int, default=500)
     p.add_argument('--batch-size', type=int, default=256)
@@ -108,7 +108,7 @@ def export(model, data, current, maximum, train_idx, val_idx, directory, history
 
 
 def fit_stage(model, data, stage, args, train_idx, val_idx, directory, source_path, *, joint=False,
-              epochs=None, learning_rate=None, strategy=None):
+              freeze_damage=False, epochs=None, learning_rate=None, strategy=None):
     directory.mkdir(parents=True, exist_ok=True)
     device = next(model.parameters()).device
     current, maximum, target = [torch.as_tensor(a, device=device) for a in
@@ -119,7 +119,18 @@ def fit_stage(model, data, stage, args, train_idx, val_idx, directory, source_pa
     if joint:
         if stage is not Mode.FREE_ENERGY_DAMAGE:
             raise ValueError('Joint S_bar fitting requires free_energy_damage')
+        if freeze_damage:
+            raise ValueError('Joint fitting cannot freeze the damage module')
         model.activate_modules(stage)
+    elif freeze_damage:
+        if stage is not Mode.FREE_ENERGY:
+            raise ValueError('Fixed-damage warmup requires the free_energy stage')
+        # Keep damage active in the forward pass at its initialized d0, while
+        # optimizing only the shared free-energy module.
+        model.activate_modules(Mode.FREE_ENERGY_DAMAGE)
+        model.requires_grad_(False)
+        model.free_energy_module.requires_grad_(True)
+        model.damage_module.requires_grad_(False)
     else:
         model.set_training_stage(stage)
     frozen = {k: v.detach().clone() for k, v in model.state_dict().items()
@@ -165,7 +176,7 @@ def fit_stage(model, data, stage, args, train_idx, val_idx, directory, source_pa
         if val_loss < best:
             best = val_loss
             best_state = {k:v.detach().cpu().clone() for k,v in model.state_dict().items()}
-            torch.save({'format':'sbar_v1', 'stress_measure':'S_bar', 'architecture':stage.value,
+            torch.save({'format':'sbar_v1', 'stress_measure':'S_bar', 'architecture':model.active_architecture.value,
                         'damage_input': model.damage_input,
                         'training_strategy': strategy or ('joint' if joint else 'sequential'),
                         'state_dict':best_state, 'best_epoch':epoch, 'best_validation_loss':best,

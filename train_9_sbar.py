@@ -18,12 +18,12 @@ def parser():
     p.add_argument('--data-root', default='data')
     p.add_argument('--materials', nargs='+', type=int, choices=range(1, 10), default=list(range(1, 10)))
     p.add_argument('--output-dir', default='outputs/9_sbar_combined')
-    p.add_argument('--damage-input', choices=['maximum_stretch', 'free_energy'],
-                   default='maximum_stretch', help='Damage driver; free_energy uses current directional energies')
+    p.add_argument('--damage-input', choices=['maximum_stretch', 'maximum_free_energy'],
+                   default='maximum_stretch', help='Damage driver; maximum_free_energy evaluates the shared energy module at maximum stretches')
     p.add_argument('--training-data', choices=['combined', 'proportional'], default='combined',
                    help='Combined fits both loading families; proportional retains held-out prestretch testing')
     p.add_argument('--warmup-epochs', type=int, default=100,
-                   help='Energy-only initialization on damaged targets; 0 disables warmup')
+                   help='Warm up free energy with initialized damage fixed; 0 disables warmup')
     p.add_argument('--warmup-learning-rate', type=float, default=None,
                    help='Defaults to --learning-rate')
     p.add_argument('--damage-epochs', type=int, default=1000)
@@ -88,12 +88,13 @@ def local_indices(indices, start, count):
 
 def fit_material(model, data, args, train_idx, val_idx, output, source_path):
     if args.warmup_epochs:
-        print(f'Energy warmup: {args.warmup_epochs} epochs on selected damaged targets', flush=True)
+        print(f'Free-energy warmup with fixed initial damage: {args.warmup_epochs} epochs', flush=True)
         fit_stage(model, data, Mode.FREE_ENERGY, args, train_idx, val_idx,
                   output/'warmup', source_path, epochs=args.warmup_epochs,
-                  learning_rate=args.warmup_learning_rate, strategy='damaged_energy_warmup')
+                  learning_rate=args.warmup_learning_rate, strategy='fixed_initial_damage_warmup',
+                  freeze_damage=True)
     # fit_stage restores the best warmup weights. Reuse this model, then enable
-    # both branches with a fresh optimizer and scheduler; do not reinitialize.
+    # and optimize both branches with a fresh optimizer and scheduler; do not reinitialize.
     print(f'Joint energy/damage training: {args.damage_epochs} epochs', flush=True)
     fit_stage(model, data, Mode.FREE_ENERGY_DAMAGE, args, train_idx, val_idx,
               output/('combined' if getattr(args, 'training_data', 'proportional') == 'combined' else 'proportional'), source_path, joint=True,
@@ -165,7 +166,7 @@ def main(arguments=None, *, defaults=None):
             ckpt = torch.load(output/fit_name/'model.pth', map_location='cpu', weights_only=False)
             # Checkpoint metadata is authoritative on replay; missing means legacy.
             model.damage_input = ckpt.get('damage_input', 'maximum_stretch')
-            if model.damage_input not in ('maximum_stretch', 'free_energy'):
+            if model.damage_input not in ('maximum_stretch', 'maximum_free_energy'):
                 raise ValueError('Unknown checkpoint damage input')
             report['damage_input'] = model.damage_input
             (output/'data_audit.json').write_text(json.dumps(report, indent=2), encoding='utf-8')

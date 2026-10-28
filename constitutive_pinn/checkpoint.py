@@ -136,7 +136,7 @@ def restore_checkpoint(model: torch.nn.Module, checkpoint: LoadedCheckpoint) -> 
     """新版严格加载；旧版只允许补齐当时不存在的关闭模块。"""
     if model.architecture is not checkpoint.architecture:
         raise ValueError("模型与检查点的模块组合不匹配。")
-    if checkpoint.damage_input not in {"maximum_stretch", "free_energy"}:
+    if checkpoint.damage_input not in {"maximum_stretch", "maximum_free_energy"}:
         raise ValueError("检查点损伤输入模式无效。")
     model.damage_input = checkpoint.damage_input
     if checkpoint.format_version == CHECKPOINT_FORMAT_VERSION:

@@ -75,7 +75,7 @@ class FreeEnergyModule(nn.Module):
 
 
 class DamageModule(nn.Module):
-    """损伤之路：由模型选择最大伸长或自由能驱动，保持局部/全局网络不变。"""
+    """损伤之路：由模型选择最大伸长或最大伸长对应的自由能驱动，保持局部/全局网络不变。"""
 
     def __init__(self) -> None:
         super().__init__()

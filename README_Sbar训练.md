@@ -1,6 +1,6 @@
 # 比例双轴 S_bar：无损伤与损伤分阶段训练
 
-新增九材料“110 个自由能 → 110 个损伤”串联实验见 [串联训练说明](README_Sbar串联训练.md)。新入口为 `train_9_sbar_serial.py` / `pred_9_sbar_serial.py`；原最大伸长驱动模式仍为旧入口默认值。
+九材料最大自由能驱动损伤实验见 [最大自由能训练说明](最大自由能驱动损伤训练（9 个材料）.md)：110 个最大伸长经共享自由能模块生成 110 个最大自由能，再进入损伤模块。入口保留 `train_9_sbar_serial.py` / `pred_9_sbar_serial.py` 历史文件名，当前自由能串联已移除；原最大伸长直接驱动模式仍为旧入口默认值。
 
 本文对应最新功能提交 `632cd56`（新增 S_bar 无损伤/损伤拟合），按数据 → 物理接口 → 训练 → 预测 → 结果组织。通用网络结构与层数见 [主 README 第 2 节](README.md#model)，初始化见 [第 4 节](README.md#hyperparameters)，MSE/RMSE 定义见 [第 6 节](README.md#metrics)。
 
@@ -8,8 +8,8 @@
 
 ## 已核实的数据
 
-- `proportional_biaxial_Sbar_NoDamage.mat`：无损伤标签。
-- `proportional_biaxial_Sbar.mat`：带损伤标签。
+- `proportional_biaxial_Sbar_NoDamage.mat`：**无损伤标签。**
+- `proportional_biaxial_Sbar.mat`：**带损伤标签。**
 - 两文件输入完全相同；直接读取 `Xtrain`、`Ytrain`，不重新生成标签。
 - MATLAB `Xtrain` 形状为 `[2,110,24005]`，`Ytrain` 为 `[6,24005]`。
 - `Xtrain(1,:,:)` 是当前**方向伸长比**，`Xtrain(2,:,:)` 是历史最大方向伸长比；这里不是工程应变或 Green 应变。

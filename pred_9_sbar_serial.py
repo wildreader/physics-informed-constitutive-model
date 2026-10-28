@@ -1,4 +1,4 @@
-"""Replay all nine serial checkpoints, including held-out prestretch predictions."""
+"""Replay all nine maximum-free-energy checkpoints, including held-out prestretch predictions."""
 import sys
 from train_9_sbar_serial import main as train_main
 

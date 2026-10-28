@@ -41,7 +41,7 @@ class ModularConstitutivePINN(nn.Module):
         super().__init__()
         self.architecture = ModelArchitecture.parse(architecture)
         self.active_architecture = self.architecture
-        if damage_input not in {"maximum_stretch", "free_energy"}:
+        if damage_input not in {"maximum_stretch", "maximum_free_energy"}:
             raise ValueError(f"Unknown damage input: {damage_input!r}")
         self.damage_input = damage_input
         self.delta_J_ref = float(delta_j_ref)
@@ -140,7 +140,7 @@ class ModularConstitutivePINN(nn.Module):
 
     def forward_sbar(self, lambda_current: torch.Tensor,
                      lambda_maximum: torch.Tensor | None = None) -> torch.Tensor:
-        """Return S_bar; history is fixed, but serial energy remains differentiable."""
+        """Return S_bar holding maximum stretch fixed during stress differentiation."""
         if self.use_volumetric:
             raise ValueError("S_bar output requires the volumetric branch to be disabled.")
         return self._compute_sbar(lambda_current, lambda_maximum)
@@ -164,18 +164,23 @@ class ModularConstitutivePINN(nn.Module):
             phi = self.free_energy_module(current_normalized, self.norm_weights)
 
             if self.use_damage:
-                if self.damage_input == "free_energy":
-                    # Direct serial connection: no stretch normalization or detach.
-                    # Differentiating (1-d(phi))*phi includes the damage chain rule.
-                    damage_values = phi
+                if lambda_maximum is None:
+                    raise ValueError(
+                        f"{self.architecture.value} 架构需要 lambda_maximum 输入。"
+                    )
+                if lambda_maximum.shape != lambda_current.shape:
+                    raise ValueError("lambda_maximum 必须与 lambda_current 形状一致。")
+                maximum_normalized = (
+                    lambda_maximum.detach() - self.x_mean
+                ) / (self.x_std + 1.0e-8)
+                if self.damage_input == "maximum_free_energy":
+                    # Share the energy network; detach history, not its energy.
+                    # Stress holds history fixed; training still updates energy weights.
+                    damage_values = self.free_energy_module(
+                        maximum_normalized, self.norm_weights
+                    )
                 else:
-                    if lambda_maximum is None:
-                        raise ValueError(
-                            f"{self.architecture.value} 架构需要 lambda_maximum 输入。"
-                        )
-                    damage_values = (
-                        lambda_maximum.detach() - self.x_mean
-                    ) / (self.x_std + 1.0e-8)
+                    damage_values = maximum_normalized
                 damage = self.damage_module(damage_values, self.norm_weights)
                 direction_energy = (1.0 - damage) * phi
             else:
